@@ -9,7 +9,7 @@
  * @author Chris K.Y. Fung <github.com/chriskyfung>
  *
  * Created at     : 2018-01-29
- * Last modified  : 2022-08-23
+ * Last modified  : 2022-09-08
  */
 
 import {
@@ -66,18 +66,26 @@ export function getInstagramData(query) {
   try {
     response = UrlFetchApp.fetch(query, params).getContentText();
   } catch (err) {
-    const errorMessage = err.message + ' (error code: 0xf1)';
+    const errorMessage = err.message + ' (code: 0xf1)';
     console.error(errorMessage);
     throw new Error(errorMessage);
   }
   if (isDebug) {
     console.log(response);
   }
+  if (response.startsWith('<!DOCTYPE html>')) {
+    const errorMessage = response.includes('not-logged-in')
+      ? 'Unable to log into Instagram (code: 0xf3)'
+      : 'Instagram API retured response in HTML not JSON (code: 0xf4)';
+    console.error(`${errorMessage}:\n${response}`);
+    throw new Error(errorMessage);
+  }
   try {
     return JSON.parse(response);
   } catch (err) {
-    console.error('Failed to parse response (error code: 0xf2):\n' + response);
-    throw new Error('Failed to parse response (error code: 0xf2)');
+    errorMessage = 'Failed to parse response (code: 0xf2)';
+    console.error(`${errorMessage}:\n${response}`);
+    throw new Error(errorMessage);
   }
 }
 

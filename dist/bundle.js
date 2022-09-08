@@ -137,12 +137,15 @@ function loadSettings() {
  * @author Chris K.Y. Fung <github.com/chriskyfung>
  *
  * Created at     : 2021-11-01
- * Last updated at : 2022-06-07
+ * Last updated at : 2022-09-05
  */
 
 const numOfColumns = 5;
-const columnFilename = 5;
-const columnSelected = numOfColumns + 1;
+const column = {
+  filename: 5,
+  selected: 6,
+  empty: 7,
+};
 let previousLogs;
 
 /**
@@ -166,7 +169,7 @@ function insertNewLog(datetime, username, url, filetype, filename) {
   logsSheet
     .getRange(2, 1, 1, numOfColumns)
     .setValues([[datetime, username, url, filetype, filename]]);
-  logsSheet.getRange(2, columnSelected).insertCheckboxes();
+  logsSheet.getRange(2, column.selected).insertCheckboxes();
 }
 
 /**
@@ -201,19 +204,19 @@ function isDownloaded(searchTerm) {
 }
 
 /**
- * onEdit event handler
- * @param {Object} e An event object
+ * Get and format the data of selected log entries
+ * @return {Object} The log sheet and the data of the selected entries
  */
-function deleteSelected() {
+function getSelected() {
   const logsSheet = SpreadsheetApp.getActive().getSheetByName(
     sheetNames['logs']
   );
   const lastRow = logsSheet.getLastRow();
-  const itemsToDelete = [];
+  const items = [];
   for (let row = 2; row <= lastRow; row++) {
-    if (logsSheet.getRange(row, columnSelected).isChecked()) {
-      const formula = logsSheet.getRange(row, columnFilename).getFormula();
-      itemsToDelete.push({
+    if (logsSheet.getRange(row, column.selected).isChecked()) {
+      const formula = logsSheet.getRange(row, column.filename).getFormula();
+      items.push({
         row: row,
         fileId: formula
           .split('https://drive.google.com/file/d/')
@@ -223,13 +226,25 @@ function deleteSelected() {
       });
     }
   }
+  return {
+    sheet: logsSheet,
+    items: items,
+  };
+}
+
+/**
+ * Delete selected log entries from the log sheet and
+ * their files from Google Drive
+ */
+function deleteSelected() {
+  const { logsSheet, items } = getSelected();
   const msg = Browser.msgBox(
     'Delete Seleted Items',
-    `Are you sure you want to delete these ${itemsToDelete.length} items and their files from your Drive?`,
+    `Are you sure you want to delete these ${items.length} items and their files from your Drive?`,
     Browser.Buttons.YES_NO
   );
   if (msg === 'yes') {
-    itemsToDelete.forEach((item, index) => {
+    items.forEach((item, index) => {
       DriveApp.getFileById(item.fileId).setTrashed(true);
       logsSheet.deleteRow(item.row - index);
     });
@@ -237,95 +252,58 @@ function deleteSelected() {
 }
 
 /**
- * badge.js
- * Copyright (c) 2020-2021
- *
- * This file contains the code to create and update SVG badges,
- * such as "last-tested-date.svg" and a "last-tested-status.svg".
- *
- * @author Chris K.Y. Fung <github.com/chriskyfung>
- *
- * Created at     : 2020-10-08
- * Last modified  : 2021-11-02
+ * Ask user to enter a Google Folder ID, and
+ * move the selected entries' files to this folder
  */
-
-/**
- * Create badges, namely "last-tested-date.svg" and a "last-tested-status.svg",
- * in the destination folder of your Google Drive using DriveApp service.
- * Obtain the file IDs and store them in the "Settings" page of the bounded
- * Google Sheet file.
- */
-function createBadages() {
-  loadSettings();
-  // Get the sheet stored the settings of Instagram Stories Fetcher
-  const spreadsheet = SpreadsheetApp.getActive();
-  const settingsSheet = spreadsheet.getSheetByName(sheetNames['settings']);
-  // Create blank SVG files in the destination folder, and store their file IDs
-  // in the global variable `badgeFileIds`.
-  badgeFileIds.lastTestedDate = dest.folderObj
-    .createFile('last-tested-date.svg', '', 'image/svg+xml')
-    .getId();
-  badgeFileIds.lastTestedStatus = dest.folderObj
-    .createFile('last-tested-status.svg', '', 'image/svg+xml')
-    .getId();
-  // Fill in the file IDs to the Google Sheet.
-  settingsSheet.getRange('dateBadgeId').setValue(badgeFileIds.lastTestedDate);
-  settingsSheet
-    .getRange('statusBadgeId')
-    .setValue(badgeFileIds.lastTestedStatus);
-  // Fill the blank SVG files with default contents.
-  setTestDateBadge();
-  setHealthStatusBadge();
-}
-
-/**
- * Update the "last-tested-date.svg" file using DriveApp service.
- * @return {string|null} The URL that can be used to download the file.
- *                       Otherwise, returns null.
- */
-function setTestDateBadge() {
-  if (badgeFileIds.lastTestedDate != '') {
-    const formattedDate = Utilities.formatDate(
-      new Date(),
-      'GMT',
-      'MMM dd, YYYY'
+function moveSelected() {
+  const { logsSheet, items } = getSelected();
+  const ui = SpreadsheetApp.getUi();
+  const result = ui.prompt(
+    'Please enter the destination folder ID:',
+    ui.ButtonSet.OK_CANCEL
+  );
+  // Process the user's response.
+  const button = result.getSelectedButton();
+  const text = result.getResponseText();
+  if (button == ui.Button.OK) {
+    // User clicked "OK".
+    let destFolder;
+    try {
+      destFolder = DriveApp.getFolderById(text);
+    } catch (err) {
+      throw new Error(
+        'The folder does not exist or the user does not have permission to access it.'
+      );
+    }
+    const msg = Browser.msgBox(
+      'Move Seleted Items',
+      `Are you sure you want to move these ${
+        items.length
+      } items' files to 📁${destFolder.getName()}?`,
+      Browser.Buttons.YES_NO
     );
-    const file = DriveApp.getFileById(badgeFileIds.lastTestedDate);
-    return DriveApp.getFileByIdAndResourceKey(
-      badgeFileIds.lastTestedDate,
-      file.getResourceKey()
-    )
-      .setContent(
-        `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="152" height="20" role="img" aria-label="last health check on ${formattedDate}"><title>tested on: ${formattedDate}</title><linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient><clipPath id="r"><rect width="152" height="20" rx="3" fill="#fff"/></clipPath><g clip-path="url(#r)"><rect width="67" height="20" fill="#555"/><rect x="67" width="85" height="20" fill="#fe7d37"/><rect width="152" height="20" fill="url(#s)"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110"><text aria-hidden="true" x="345" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="570">tested on</text><text x="345" y="140" transform="scale(.1)" fill="#fff" textLength="570">tested on</text><text aria-hidden="true" x="1085" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="750">${formattedDate}</text><text x="1085" y="140" transform="scale(.1)" fill="#fff" textLength="750">${formattedDate}</text></g></svg>`
-      )
-      .getDownloadUrl();
+    if (msg === 'yes') {
+      items.forEach((item, index) => {
+        if (item.fileId != '') {
+          try {
+            DriveApp.getFileById(item.fileId).moveTo(destFolder);
+            logsSheet.getRange(item.row, column.selected).uncheck();
+            logsSheet
+              .getRange(item.row, column.empty)
+              .setValue('Moved')
+              .setFontColor('blue');
+          } catch (err) {
+            logsSheet
+              .getRange(item.row, column.empty)
+              .setValue(
+                'The file does not exist or the user does not have permission to access it.'
+              )
+              .setFontColor('red');
+          }
+        }
+      });
+    }
   }
-  return null;
-}
-
-/**
- * Update the "last-tested-status.svg" file using DriveApp service.
- * @param {boolean} healthy The arguement to determine the badge color and the
- *                 text to display in the badge. Default value is 'failed'.
- * @return {string|null} The URL that can be used to download the file.
- *                       Otherwise, returns null.
- */
-function setHealthStatusBadge(healthy) {
-  if (badgeFileIds.lastTestedStatus != '') {
-    const [color, status] =
-      healthy === true ? ['#4c1', 'passed'] : ['#f00', 'failed'];
-    const file = DriveApp.getFileById(badgeFileIds.lastTestedStatus);
-    return DriveApp.getFileByIdAndResourceKey(
-      badgeFileIds.lastTestedStatus,
-      file.getResourceKey()
-    )
-      .setContent(
-        `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="124" height="20" role="img" aria-label="health check: ${status}}"><title>health check: ${status}</title><linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient><clipPath id="r"><rect width="124" height="20" rx="3" fill="#fff"/></clipPath><g clip-path="url(#r)"><rect width="75" height="20" fill="#555"/><rect x="75" width="49" height="20" fill="${color}"/><rect width="124" height="20" fill="url(#s)"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110"><text aria-hidden="true" x="385" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="650">health check</text><text x="385" y="140" transform="scale(.1)" fill="#fff" textLength="650">health check</text><text aria-hidden="true" x="985" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="390">${status}</text><text x="985" y="140" transform="scale(.1)" fill="#fff" textLength="390">${status}</text></g></svg>`
-      )
-      .setDescription(`test-${healthy}`)
-      .getDownloadUrl();
-  }
-  return null;
 }
 
 // url_to_drive.gs
@@ -438,7 +416,7 @@ function uploadToDrive(url, folderid, filename) {
  * @author Chris K.Y. Fung <github.com/chriskyfung>
  *
  * Created at     : 2018-01-29
- * Last modified  : 2022-08-23
+ * Last modified  : 2022-09-08
  */
 
 /**
@@ -485,15 +463,23 @@ function getInstagramData(query) {
   try {
     response = UrlFetchApp.fetch(query, params).getContentText();
   } catch (err) {
-    const errorMessage = err.message + ' (error code: 0xf1)';
+    const errorMessage = err.message + ' (code: 0xf1)';
     console.error(errorMessage);
+    throw new Error(errorMessage);
+  }
+  if (response.startsWith('<!DOCTYPE html>')) {
+    const errorMessage = response.includes('not-logged-in')
+      ? 'Unable to log into Instagram (code: 0xf3)'
+      : 'Instagram API retured response in HTML not JSON (code: 0xf4)';
+    console.error(`${errorMessage}:\n${response}`);
     throw new Error(errorMessage);
   }
   try {
     return JSON.parse(response);
   } catch (err) {
-    console.error('Failed to parse response (error code: 0xf2):\n' + response);
-    throw new Error('Failed to parse response (error code: 0xf2)');
+    errorMessage = 'Failed to parse response (code: 0xf2)';
+    console.error(`${errorMessage}:\n${response}`);
+    throw new Error(errorMessage);
   }
 }
 
@@ -601,6 +587,98 @@ function createViewFileFormula(filename, folderId) {
     const file = files.next();
     return `=HYPERLINK("${file.getUrl()}", "${filename}")`;
   }
+}
+
+/**
+ * badge.js
+ * Copyright (c) 2020-2021
+ *
+ * This file contains the code to create and update SVG badges,
+ * such as "last-tested-date.svg" and a "last-tested-status.svg".
+ *
+ * @author Chris K.Y. Fung <github.com/chriskyfung>
+ *
+ * Created at     : 2020-10-08
+ * Last modified  : 2021-11-02
+ */
+
+/**
+ * Create badges, namely "last-tested-date.svg" and a "last-tested-status.svg",
+ * in the destination folder of your Google Drive using DriveApp service.
+ * Obtain the file IDs and store them in the "Settings" page of the bounded
+ * Google Sheet file.
+ */
+function createBadages() {
+  loadSettings();
+  // Get the sheet stored the settings of Instagram Stories Fetcher
+  const spreadsheet = SpreadsheetApp.getActive();
+  const settingsSheet = spreadsheet.getSheetByName(sheetNames['settings']);
+  // Create blank SVG files in the destination folder, and store their file IDs
+  // in the global variable `badgeFileIds`.
+  badgeFileIds.lastTestedDate = dest.folderObj
+    .createFile('last-tested-date.svg', '', 'image/svg+xml')
+    .getId();
+  badgeFileIds.lastTestedStatus = dest.folderObj
+    .createFile('last-tested-status.svg', '', 'image/svg+xml')
+    .getId();
+  // Fill in the file IDs to the Google Sheet.
+  settingsSheet.getRange('dateBadgeId').setValue(badgeFileIds.lastTestedDate);
+  settingsSheet
+    .getRange('statusBadgeId')
+    .setValue(badgeFileIds.lastTestedStatus);
+  // Fill the blank SVG files with default contents.
+  setTestDateBadge();
+  setHealthStatusBadge();
+}
+
+/**
+ * Update the "last-tested-date.svg" file using DriveApp service.
+ * @return {string|null} The URL that can be used to download the file.
+ *                       Otherwise, returns null.
+ */
+function setTestDateBadge() {
+  if (badgeFileIds.lastTestedDate != '') {
+    const formattedDate = Utilities.formatDate(
+      new Date(),
+      'GMT',
+      'MMM dd, YYYY'
+    );
+    const file = DriveApp.getFileById(badgeFileIds.lastTestedDate);
+    return DriveApp.getFileByIdAndResourceKey(
+      badgeFileIds.lastTestedDate,
+      file.getResourceKey()
+    )
+      .setContent(
+        `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="152" height="20" role="img" aria-label="last health check on ${formattedDate}"><title>tested on: ${formattedDate}</title><linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient><clipPath id="r"><rect width="152" height="20" rx="3" fill="#fff"/></clipPath><g clip-path="url(#r)"><rect width="67" height="20" fill="#555"/><rect x="67" width="85" height="20" fill="#fe7d37"/><rect width="152" height="20" fill="url(#s)"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110"><text aria-hidden="true" x="345" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="570">tested on</text><text x="345" y="140" transform="scale(.1)" fill="#fff" textLength="570">tested on</text><text aria-hidden="true" x="1085" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="750">${formattedDate}</text><text x="1085" y="140" transform="scale(.1)" fill="#fff" textLength="750">${formattedDate}</text></g></svg>`
+      )
+      .getDownloadUrl();
+  }
+  return null;
+}
+
+/**
+ * Update the "last-tested-status.svg" file using DriveApp service.
+ * @param {boolean} healthy The arguement to determine the badge color and the
+ *                 text to display in the badge. Default value is 'failed'.
+ * @return {string|null} The URL that can be used to download the file.
+ *                       Otherwise, returns null.
+ */
+function setHealthStatusBadge(healthy) {
+  if (badgeFileIds.lastTestedStatus != '') {
+    const [color, status] =
+      healthy === true ? ['#4c1', 'passed'] : ['#f00', 'failed'];
+    const file = DriveApp.getFileById(badgeFileIds.lastTestedStatus);
+    return DriveApp.getFileByIdAndResourceKey(
+      badgeFileIds.lastTestedStatus,
+      file.getResourceKey()
+    )
+      .setContent(
+        `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="124" height="20" role="img" aria-label="health check: ${status}}"><title>health check: ${status}</title><linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient><clipPath id="r"><rect width="124" height="20" rx="3" fill="#fff"/></clipPath><g clip-path="url(#r)"><rect width="75" height="20" fill="#555"/><rect x="75" width="49" height="20" fill="${color}"/><rect width="124" height="20" fill="url(#s)"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110"><text aria-hidden="true" x="385" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="650">health check</text><text x="385" y="140" transform="scale(.1)" fill="#fff" textLength="650">health check</text><text aria-hidden="true" x="985" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="390">${status}</text><text x="985" y="140" transform="scale(.1)" fill="#fff" textLength="390">${status}</text></g></svg>`
+      )
+      .setDescription(`test-${healthy}`)
+      .getDownloadUrl();
+  }
+  return null;
 }
 
 /**
@@ -791,6 +869,7 @@ exports.isDebug = isDebug;
 exports.isDownloaded = isDownloaded;
 exports.loadRecentLogs = loadRecentLogs;
 exports.loadSettings = loadSettings;
+exports.moveSelected = moveSelected;
 exports.setHealthStatusBadge = setHealthStatusBadge;
 exports.setTestDateBadge = setTestDateBadge;
 exports.sheetNames = sheetNames;
